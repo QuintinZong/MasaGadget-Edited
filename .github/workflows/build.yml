@@ -1,74 +1,55 @@
-name: _step.build
+# 工作流名称
+name: Build Fabric Mod for Minecraft 26.2
+
+# 触发器配置：使用 workflow_dispatch（手动触发）
 on:
-  workflow_call:
+  workflow_dispatch:
+    # 你可以定义输入参数，方便在触发时动态指定版本（非必填）
     inputs:
-      build_publish:
-        type: boolean
-        default: false
+      release_tag:
+        description: 'JAR 文件名后缀（或版本号）'
         required: false
-      build_version_type:
+        default: 'latest'
         type: string
-        default: 'DEV'
-        required: false
+
+# 定义工作流中的具体任务（Jobs）
 jobs:
-  build:
-    runs-on: ubuntu-24.04
+  build-mod-jar:
+    # 运行环境：使用最新的 Ubuntu 系统
+    runs-on: ubuntu-latest
+
+    # 执行步骤
     steps:
-      - name: Checkout the sources
+      # 1. 检出（Checkout）你的代码仓库
+      - name: Checkout Repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Set up JDK 25
+
+      # 2. 设置 Java 环境（Minecraft 26.2 强制要求 JDK 21）
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
-          java-version: 25
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/master' && github.ref != 'refs/heads/dev' }}
-      - name: Build and publish with gradle
-        if: ${{ inputs.build_publish == true }}
-        run: |
-          ./gradlew build publish -x test --stacktrace
-        env:
-          BUILD_TYPE: ${{ inputs.build_version_type }}
-          NYAN_MAVEN_PASSWORD: ${{ secrets.NYAN_MAVEN_PASSWORD }}
-          NYAN_MAVEN_USERNAME: ${{ secrets.NYAN_MAVEN_USERNAME }}
-          SIGNING_PGP_KEY: ${{ secrets.SIGNING_PGP_KEY }}
-      - name: Build and publishToMavenLocal with gradle
-        if: ${{ inputs.build_publish == false }}
-        run: |
-          ./gradlew build publishToMavenLocal -x test --stacktrace
-        env:
-          BUILD_TYPE: ${{ inputs.build_version_type }}
-      - name: Upload build artifacts
+          java-version: '21'
+          distribution: 'temurin' # 推荐使用 Adoptium (Eclipse Temurin)
+
+      # 3. 设置 Gradle 缓存（大幅加速后续构建）
+      - name: Setup Gradle Cache
+        uses: gradle/actions/setup-gradle@v3
+
+      # 4. 赋予 gradlew 执行权限（Linux/macOS 环境必需）
+      - name: Make Gradlew Executable
+        run: chmod +x gradlew
+
+      # 5. 执行 Gradle 构建任务（生成 JAR 文件）
+      - name: Build Mod JAR
+        run: ./gradlew build
+
+      # 6. 上传构建产物（Artifact）到 GitHub
+      - name: Upload JAR Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: build-artifacts
-          path: |
-            */**/build/libs/
-            */**/build/tmp/submods/
-      - name: Upload MavenLocal
-        uses: actions/upload-artifact@v4
-        with:
-          name: Maven Local
-          path: ~/.m2/repository/com/plusls/
-  summary:
-    runs-on: ubuntu-24.04
-    needs:
-      - build
-    steps:
-      - name: Checkout the sources
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Download build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: build-artifacts
-          path: build-artifacts
-      - name: Make build summary
-        run: |
-          pip install jproperties
-          python .github/workflows/scripts/summary.py
+          # 压缩包名称，可包含触发时输入的版本号
+          name: mod-jar-${{ github.event.inputs.release_tag }}
+          # 指定需要上传的文件路径（build/libs 下的所有 jar 文件）
+          path: build/libs/*.jar
+          # 保留天数，默认为 90 天，这里设为 7 天以供临时测试
+          retention-days: 7
