@@ -1,0 +1,287 @@
+import net.fabricmc.loom.util.ModPlatform
+
+plugins {
+    id("checkstyle")
+    id("maven-publish")
+
+    alias(libs.plugins.yamlang)
+    alias(libs.plugins.replace.token)
+
+    id("top.hendrixshen.magiclib.build-logic.magic-loom")
+}
+
+final int mcVersion = magic.projectDetail.get().getMinecraftVersionNumber()
+final ModPlatform modPlatform = magic.projectDetail.get().getPlatform()
+final boolean fabricLike = !modPlatform.isForgeLike()
+final boolean forgeLike = modPlatform.isForgeLike()
+final VersionCatalogsExtension catalogsExtension = project.getExtensions().getByType(VersionCatalogsExtension.class)
+
+repositories {
+    mavenLocal()
+
+    maven {
+        name = "NyanMaven Release"
+        url = "https://maven.hendrixshen.moe/releases"
+
+        content {
+            includeGroupAndSubgroups("top.hendrixshen")
+        }
+    }
+
+    maven {
+        name = "NyanMaven Mirror"
+        url = "https://maven.hendrixshen.moe/mirror"
+    }
+
+    maven {
+        name = "Modrinth Maven"
+        url = "https://api.modrinth.com/maven"
+
+        content {
+            includeGroup("maven.modrinth")
+        }
+    }
+
+    maven {
+        name = "Curse Maven"
+        url = "https://www.cursemaven.com"
+
+        content {
+            includeGroup("curse.maven")
+        }
+    }
+
+    maven {
+        name = "Jitpack Maven"
+        url = "https://jitpack.io"
+
+        content {
+            includeGroupAndSubgroups("com.github")
+        }
+    }
+
+    mavenCentral()
+}
+
+// Configuration name, Module, Resolve condition, Use version mapping, Configuration closure.
+def deps = [
+        ["autoApi"          , "itemscroller", fabricLike                         , true , { transitive = false }],
+        ["autoApi"          , "litematica"  , fabricLike                         , true , { transitive = false }],
+        ["autoApi"          , "minihud"     , fabricLike                         , true , { transitive = false }],
+        ["autoApi"          , "tweakeroo"   , fabricLike                         , true , { transitive = false }],
+        ["autoApi"          , "forgematica" , forgeLike                          , true , { transitive = false }],
+        ["autoApi"          , "rocknroller" , forgeLike                          , true , { transitive = false }],
+        ["autoApi"          , "bocchud"     , forgeLike                          , true , { transitive = false }],
+        ["autoApi"          , "tweakerge"   , forgeLike                          , true , { transitive = false }],
+        ["implementation"   , "pinyin"      , fabricLike                         , false, { transitive = false }],
+        ["forge"            , "pinyin"      , modPlatform == ModPlatform.FORGE   , false, { transitive = false }],
+        ["forgeDependencies", "pinyin"      , modPlatform == ModPlatform.NEOFORGE, false, { transitive = false }],
+        ["include"          , "pinyin"      , true                               , false, { transitive = false }],
+]
+
+dependencies {
+    // Lombok
+    compileOnly(libs.lombok)
+    annotationProcessor(libs.lombok)
+
+    // Dependency
+    autoApi(annotationProcessor("top.hendrixshen.magiclib:magiclib-all-${magic.getProjectDetail().get().getProjectName()}:${catalogsExtension.named("mods").findVersion("magiclib").orElseThrow { throw new GradleException("No magiclib version found") } }"))
+
+    deps.forEach { item ->
+        String configurationName = item[0]
+        String dependencyName = item[1]
+        boolean shouldResolve = item[2]
+
+        if (!shouldResolve) {
+            return
+        }
+
+        org.gradle.api.provider.Provider<MinimalExternalModuleDependency> dep = catalogsExtension.named("mods").findLibrary(item[3] ? "${dependencyName}-mc${mcVersion}" : dependencyName).orElseThrow { throw new GradleException("No mod library found for ${dependencyName + (item[3] ? "-mc${mcVersion}" : "")}") }
+        shouldResolve &= dep.get().getVersion() != "0"
+        Closure<Void> closure = (Closure<Void>) item[4]
+
+        if (shouldResolve) {
+            add(configurationName, dep, closure)
+        }
+    }
+}
+
+loom {
+    // accessWidenerPath.set(file("src/main/resources/${project.parent.property("mod.id")}.accesswidener"))
+    enableTransitiveAccessWideners.set(false)
+
+    interfaceInjection {
+        enableDependencyInterfaceInjection.set(false)
+        isEnabled.set(false)
+    }
+
+    runConfigs.named("client") {
+        programArgs([
+                "--width",
+                rootProject.getOrDefault("ow.game.window.width", "1920"),
+                "--height",
+                rootProject.getOrDefault("ow.game.window.height", "1080"),
+                "--username",
+                rootProject.getOrDefault("ow.game.window.username", "dev")
+        ])
+    }
+
+    if (fabricLike) {
+        runs {
+            mixinAuditClient {
+                inherit(client)
+                vmArgs("-Dmagiclib.debug.mixinAuditor.enable=true")
+                ideConfigGenerated(false)
+                runDir("run/client")
+            }
+
+            mixinAuditServer {
+                inherit(server)
+                vmArgs("-Dmagiclib.debug.mixinAuditor.enable=true")
+                ideConfigGenerated(false)
+                runDir("run/server")
+            }
+        }
+    }
+}
+
+base {
+    setArchivesName("${project.parent.property("mod.archives_base_name")}-mc${magic.projectDetail.get().getMinecraftVersionName()}-${modPlatform.id()}")
+    setGroup("${rootProject.property("mod.maven_group")}")
+    setVersion(rootProject.getModVersion(project.parent))
+}
+
+checkstyle {
+    configFile = rootProject.file("checkstyle.xml")
+    toolVersion = libs.versions.checkstyle.get()
+}
+
+replaceToken {
+    targetSourceSets.set([sourceSets.main])
+    replace("@MOD_IDENTIFIER@", project.parent.property("mod.id").toString().replace("-", "_"))
+    replace("@MOD_NAME@"      , project.parent.property("mod.name"))
+    replace("@MOD_VERSION@"   , rootProject.getVersionWithCommitHash(this.project.parent) as String)
+    replaceIn("com/plusls/MasaGadget/MasaGadgetNeoForgeMod")
+    replaceIn("com/plusls/MasaGadget/SharedConstants")
+}
+
+processResources {
+    inputs.property("magiclib_dependency" , project.property("dependencies.magiclib_dependency"))
+    inputs.property("minecraft_dependency", project.property("dependencies.minecraft_dependency"))
+    inputs.property("mod_alias"           , project.parent.property("mod.id"))
+    inputs.property("mod_description"     , project.parent.property("mod.description"))
+    inputs.property("mod_homepage"        , project.parent.property("mod.homepage"))
+    inputs.property("mod_id"              , project.parent.property("mod.id").toString().replace("-", "_"))
+    inputs.property("mod_license"         , project.parent.property("mod.license"))
+    inputs.property("mod_name"            , project.parent.property("mod.name"))
+    inputs.property("mod_sources"         , project.parent.property("mod.sources"))
+    inputs.property("mod_version"         , rootProject.getVersionWithCommitHash(this.project.parent))
+
+    [
+            "fabric.mod.json"            : ["fabric"],
+            "META-INF"                   : ["forge", "neoforge"],
+            "META-INF/mods.toml"         : ["forge", mcVersion < 12005 ? "neoforge": "none"],
+            "META-INF/neoforge.mods.toml": [mcVersion > 12004 ? "neoforge" : "none"]
+    ].forEach { file, platforms ->
+        if (platforms.contains(modPlatform.id())) {
+            filesMatching(file) {
+                expand([
+                        "magiclib_dependency" : inputs.properties.get("magiclib_dependency"),
+                        "minecraft_dependency": inputs.properties.get("minecraft_dependency"),
+                        "mod_alias"           : inputs.properties.get("mod_alias"),
+                        "mod_description"     : inputs.properties.get("mod_description"),
+                        "mod_homepage"        : inputs.properties.get("mod_homepage"),
+                        "mod_id"              : inputs.properties.get("mod_id"),
+                        "mod_license"         : inputs.properties.get("mod_license"),
+                        "mod_name"            : inputs.properties.get("mod_name"),
+                        "mod_sources"         : inputs.properties.get("mod_sources"),
+                        "mod_version"         : inputs.properties.get("mod_version")
+                ])
+            }
+        } else {
+            exclude(file)
+        }
+    }
+
+    from("${rootDir}/LICENSE")
+    from("${rootDir}/icon.png") {
+        if (fabricLike) {
+            into("assets/${project.parent.property("mod.id")}")
+        }
+    }
+}
+
+yamlang {
+    targetSourceSets.set([sourceSets.main])
+    inputDir.set("assets/${project.parent.property("mod.id")}/lang")
+}
+
+publishing {
+    publications {
+        register("release", MavenPublication) {
+            artifactId = "${this.project.parent.property("mod.artifact_name")}-${project.name}"
+            from(this.project.components.java)
+            version = "${rootProject.getMavenArtifactVersion(this.project.parent)}"
+        }
+    }
+
+    repositories {
+        mavenLocal {
+            name = "mavenLocal"
+        }
+
+        maven {
+            name = "projectLocalRelease"
+            url = "${rootDir}/publish/release"
+        }
+    }
+}
+
+tasks.withType(PublishToMavenRepository).configureEach {
+    Provider<Boolean> predicate = provider {
+        repository == publishing.repositories.mavenLocal ||
+                (repository == publishing.repositories.projectLocalRelease && publication == publishing.publications.release)
+    }
+
+    onlyIf {
+        predicate.get()
+    }
+}
+
+tasks.withType(Javadoc).configureEach { Javadoc task ->
+    include("**/api/**")
+    task.options.encoding("UTF-8")
+    (task.options as CoreJavadocOptions).addStringOption("Xdoclint:none", "-quiet")
+}
+
+tasks.register("cleanRuns", DefaultTask.class) {
+    doLast {
+        file(loom.runConfigs.client.runDir).parentFile.deleteDir()
+    }
+}
+
+tasks.register("cleanRunClient", DefaultTask.class) {
+    doLast {
+        file(loom.runConfigs.client.runDir).deleteDir()
+    }
+}
+
+tasks.register("cleanRunServer", DefaultTask.class) {
+    doLast {
+        file(loom.runConfigs.server.runDir).deleteDir()
+    }
+}
+
+[
+        "cleanRuns", "cleanRunClient", "cleanRunServer",
+        "runClient", "runServer",
+        "runMixinAuditClient", "runMixinAuditServer",
+        "preprocessCode", "preprocessResources",
+        "preprocessTestCode", "preprocessTestResources"
+].forEach { taskName ->
+    if (tasks.getNames().contains(taskName)) {
+        tasks.named(taskName) {
+            it.setGroup("${rootProject.property("mod.id")}")
+        }
+    }
+}
