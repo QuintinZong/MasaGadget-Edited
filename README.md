@@ -11,6 +11,7 @@
 [English](./README_EN.md)
 
 本仓库是原仓库[MasaGadget](https://github.com/plusls/MasaGadget)的修改版，鉴于原mod长时间未更新26.2进行移植，不会新增任何功能
+
 ❗在报告问题前，请务必尝试最新[测试版](https://github.com/plusls/MasaGadget/actions)，检查问题是否依然存在。
 
 为 Masa 系列模组添加了一些特性。
